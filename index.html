@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NFC 霓虹写入器 // 2077</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* --- 赛博朋克核心样式 --- */
+    /* 添加中文兼容的字体栈 */
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+    :root {
+      --neon-cyan: #00f3ff;
+      --neon-pink: #ff00ff;
+      --neon-yellow: #fcee0a;
+      --bg-dark: #050505;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--neon-cyan);
+      /* 优先使用等宽字体，回退到系统中文黑体 */
+      font-family: 'Share Tech Mono', 'Courier New', 'Microsoft YaHei', 'PingFang SC', monospace;
+      background-image:
+        linear-gradient(rgba(0, 243, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 243, 255, 0.03) 1px, transparent 1px);
+      background-size: 20px 20px;
+      overflow-x: hidden;
+    }
+
+    /* CRT 扫描线效果 */
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(to bottom,
+          rgba(255, 255, 255, 0),
+          rgba(255, 255, 255, 0) 50%,
+          rgba(0, 0, 0, 0.2) 50%,
+          rgba(0, 0, 0, 0.2));
+      background-size: 100% 4px;
+      pointer-events: none;
+      z-index: 50;
+    }
+
+    /* 霓虹发光文字 */
+    .text-glow {
+      text-shadow: 0 0 5px var(--neon-cyan), 0 0 10px var(--neon-cyan);
+    }
+
+    .text-glow-pink {
+      text-shadow: 0 0 5px var(--neon-pink), 0 0 10px var(--neon-pink);
+    }
+
+    /* 赛博朋克边框 */
+    .cyber-card {
+      background: rgba(10, 10, 15, 0.8);
+      border: 1px solid var(--neon-cyan);
+      box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
+      position: relative;
+    }
+
+    /* 边角装饰 */
+    .cyber-card::before {
+      content: '';
+      position: absolute;
+      top: -1px;
+      left: -1px;
+      width: 10px;
+      height: 10px;
+      border-top: 2px solid var(--neon-cyan);
+      border-left: 2px solid var(--neon-cyan);
+    }
+
+    .cyber-card::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      right: -1px;
+      width: 10px;
+      height: 10px;
+      border-bottom: 2px solid var(--neon-cyan);
+      border-right: 2px solid var(--neon-cyan);
+    }
+
+    /* 故障文字动画 */
+    @keyframes glitch {
+      0% {
+        transform: translate(0)
+      }
+
+      20% {
+        transform: translate(-2px, 2px)
+      }
+
+      40% {
+        transform: translate(-2px, -2px)
+      }
+
+      60% {
+        transform: translate(2px, 2px)
+      }
+
+      80% {
+        transform: translate(2px, -2px)
+      }
+
+      100% {
+        transform: translate(0)
+      }
+    }
+
+    .glitch-hover:hover {
+      animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite;
+      color: var(--neon-yellow);
+    }
+
+    /* 扫描呼吸动画 */
+    @keyframes cyber-pulse {
+      0% {
+        box-shadow: 0 0 5px var(--neon-yellow);
+        border-color: var(--neon-yellow);
+      }
+
+      50% {
+        box-shadow: 0 0 20px var(--neon-yellow), inset 0 0 10px var(--neon-yellow);
+        border-color: #fff;
+      }
+
+      100% {
+        box-shadow: 0 0 5px var(--neon-yellow);
+        border-color: var(--neon-yellow);
+      }
+    }
+
+    .state-scanning {
+      animation: cyber-pulse 1.5s infinite;
+    }
+
+    /* 按钮切角 */
+    .clip-corner {
+      clip-path: polygon(10px 0, 100% 0,
+          100% calc(100% - 10px),
+          calc(100% - 10px) 100%,
+          0 100%,
+          0 10px);
+    }
+  </style>
+</head>
+
+<body class="p-4">
+  <!-- CRT 滤镜层 -->
+  <div class="scanlines"></div>
+
+  <div class="max-w-md mx-auto relative z-10">
+    <!-- 头部 -->
+    <header class="mb-8 text-center border-b border-gray-800 pb-4">
+      <h1 class="text-4xl font-bold text-white text-glow tracking-tighter">NFC 写入终端<span
+                        class="text-pink-500">.EXE</span></h1>
+      <div class="text-xs text-gray-400 mt-2 tracking-[0.2em] uppercase">系统 v2.1 // 诊断修复版</div>
+    </header>
+
+    <!-- 状态指示区 -->
+    <div id="status-card" class="cyber-card p-8 mb-6 text-center transition-all duration-300">
+      <div id="status-icon" class="text-6xl mb-4 drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">🛑</div>
+      <h2 id="status-text" class="text-2xl font-bold mb-2 text-white">系统检查中...</h2>
+      <div class="h-1 w-24 mx-auto bg-gray-800 rounded-full overflow-hidden mt-2">
+        <div id="loading-bar" class="h-full bg-cyan-400 w-0 transition-all duration-300"></div>
+      </div>
+      <p id="status-sub" class="text-xs text-cyan-700 mt-3 font-bold uppercase tracking-widest">>>> 正在初始化核心组件</p>
+    </div>
+
+    <!-- 配置控制区 -->
+    <div class="cyber-card p-6 mb-6">
+      <div class="absolute -top-3 left-4 bg-[#050505] px-2 text-xs text-pink-500 border border-pink-500">配置模块</div>
+
+      <!-- 数据类型选择 -->
+      <div class="mb-6">
+        <label class="block text-xs text-gray-500 mb-2 uppercase tracking-widest">// 数据传输协议</label>
+        <div class="flex space-x-4">
+          <button onclick="setRecordType('text')" id="btn-type-text"
+                          class="flex-1 py-2 px-4 border border-cyan-400 text-cyan-400 bg-cyan-900/20 hover:bg-cyan-400 hover:text-black transition-colors font-bold text-sm clip-corner">文本模式</button>
+          <button onclick="setRecordType('url')" id="btn-type-url"
+                          class="flex-1 py-2 px-4 border border-gray-700 text-gray-500 hover:border-pink-500 hover:text-pink-500 transition-colors font-bold text-sm clip-corner">URL
+            链接</button>
+        </div>
+      </div>
+
+      <!-- 数据输入 -->
+      <div class="mb-6">
+        <label class="block text-xs text-gray-500 mb-2 uppercase tracking-widest">// 数据载荷</label>
+        <div class="relative">
+          <textarea id="write-content" rows="3"
+                          class="w-full bg-black border border-gray-700 p-3 text-green-400 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 focus:outline-none transition-all font-mono text-sm"
+                          placeholder="在此输入数据...">Hello World</textarea>
+          <!-- 装饰性的角标 -->
+          <div class="absolute bottom-2 right-2 text-[10px] text-gray-600">输入流</div>
+        </div>
+      </div>
+
+      <!-- 操作按钮 -->
+      <button id="toggle-btn"
+                      class="w-full py-5 text-black font-black text-xl bg-cyan-400 hover:bg-white hover:shadow-[0_0_20px_rgba(0,243,255,0.6)] transition-all clip-corner glitch-hover uppercase tracking-widest">
+        初始化系统
+      </button>
+    </div>
+
+    <!-- 日志区 -->
+    <div class="border border-gray-800 bg-black p-4 h-48 overflow-y-auto font-mono text-xs relative">
+      <div class="absolute top-0 right-0 bg-gray-800 text-white px-2 py-0.5 text-[10px]">系统日志</div>
+      <div id="console-log" class="space-y-1">
+        <!-- Log entries will appear here -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 全局状态管理
+    let isWriting = false;
+    let abortController = null;
+    let recordType = 'text'; // 'text' | 'url'
+    let successCount = 0;
+
+    // DOM 元素引用
+    const statusCard = document.getElementById('status-card');
+    const statusText = document.getElementById('status-text');
+    const statusSub = document.getElementById('status-sub');
+    const statusIcon = document.getElementById('status-icon');
+    const loadingBar = document.getElementById('loading-bar');
+    const toggleBtn = document.getElementById('toggle-btn');
+    const logContainer = document.getElementById('console-log');
+    const inputContent = document.getElementById('write-content');
+
+    // --- 启动时立即执行环境诊断 ---
+    window.addEventListener('load', () => {
+      performSystemDiagnostics();
+    });
+
+    function performSystemDiagnostics() {
+      log("> 正在引导自检序列...", "info");
+
+      // 1. 检查是否为安全上下文 (HTTPS/Localhost)
+      if (!window.isSecureContext) {
+        log("严重错误: 不安全的环境 (Insecure Context)", "error");
+        log(`当前协议: ${window.location.protocol}`, "warn");
+
+        if (window.location.protocol === 'file:') {
+          log("原因: 你正在直接打开本地文件。", "warn");
+          log("解决: 必须通过 HTTP Server 访问 (如 VSCode Live Server)", "success");
+        } else {
+          log("原因: 当前连接未使用 HTTPS。", "warn");
+          log("解决: 请部署到 GitHub Pages/Vercel 或使用 Localhost", "success");
+        }
+
+        updateUIState('error');
+        statusText.textContent = "环境不安全";
+        statusSub.textContent = ">>> 需要 HTTPS 或 Localhost";
+        toggleBtn.disabled = true;
+        toggleBtn.textContent = "环境受限";
+        toggleBtn.className = "w-full py-5 text-gray-500 bg-gray-800 border border-red-900 cursor-not-allowed clip-corner uppercase tracking-widest";
+        return;
+      }
+
+      // 2. 检查 NDEFReader 支持
+      if (!("NDEFReader" in window)) {
+        log("错误: 浏览器内核不支持 Web NFC", "error");
+        log(`UserAgent: ${navigator.userAgent}`, "warn");
+
+        updateUIState('error');
+        statusText.textContent = "硬件/内核不支持";
+        statusSub.textContent = ">>> 请确认使用 Chrome Android 89+";
+        toggleBtn.disabled = true;
+        toggleBtn.textContent = "组件缺失";
+        toggleBtn.classList.add("opacity-50", "cursor-not-allowed");
+        return;
+      }
+
+      // 3. 一切正常
+      log("自检通过: HTTPS 环境确认", "success");
+      log("自检通过: NDEF 模块就绪", "success");
+      updateUIState('idle');
+    }
+
+    // 类型切换逻辑
+    function setRecordType(type) {
+      recordType = type;
+      const btnText = document.getElementById('btn-type-text');
+      const btnUrl = document.getElementById('btn-type-url');
+
+      const activeClass = "border-cyan-400 text-cyan-400 bg-cyan-900/20";
+      const inactiveClass = "border-gray-700 text-gray-500";
+
+      if (type === 'text') {
+        btnText.className = `flex-1 py-2 px-4 border transition-colors font-bold text-sm clip-corner ${activeClass}`;
+        btnUrl.className = `flex-1 py-2 px-4 border transition-colors font-bold text-sm clip-corner hover:border-pink-500 hover:text-pink-500 ${inactiveClass}`;
+        inputContent.placeholder = "输入文本数据...";
+      } else {
+        btnText.className = `flex-1 py-2 px-4 border transition-colors font-bold text-sm clip-corner hover:border-pink-500 hover:text-pink-500 ${inactiveClass}`;
+        btnUrl.className = `flex-1 py-2 px-4 border transition-colors font-bold text-sm clip-corner ${activeClass}`;
+        inputContent.placeholder = "需要 HTTPS:// 协议链接";
+      }
+      log(`> 协议已切换至: ${type.toUpperCase()}`);
+    }
+
+    // 核心：切换写入状态
+    toggleBtn.addEventListener('click', async () => {
+      if (!isWriting) {
+        await startAutoWrite();
+      } else {
+        stopAutoWrite();
+      }
+    });
+
+    // 核心：自动写入循环逻辑
+    async function startAutoWrite() {
+      try {
+        // 实例化时可能会请求权限
+        const ndef = new NDEFReader();
+
+        log("> 请求 NFC 硬件访问权限...");
+        // 尝试一次扫描来触发权限弹窗（如果还没授权）
+        await ndef.scan();
+
+        isWriting = true;
+        abortController = new AbortController();
+
+        updateUIState('scanning');
+        log("> 访问已授权。序列已启动...", "success");
+
+        while (isWriting) {
+          try {
+            const content = inputContent.value.trim();
+            if (!content) {
+              log("> 警告: 数据载荷为空。挂起中...", "warn");
+              await delay(1000);
+              continue;
+            }
+
+            const record = recordType === 'url'
+              ? { recordType: "url", data: content }
+              : { recordType: "text", data: content };
+
+            // 关键：signal 用于中断挂起的 write
+            await ndef.write({ records: [record] }, { signal: abortController.signal });
+
+            successCount++;
+            updateUIState('success');
+            log(`> [${successCount}] 注入成功: ${content.substring(0, 15)}...`, "success");
+
+            await delay(1500); // 稍微增加延迟，防止过快
+
+            if (isWriting) updateUIState('scanning');
+
+          } catch (error) {
+            if (error.name === 'AbortError') {
+              log("> 用户中止了序列。");
+              break;
+            } else if (error.name === 'NotAllowedError') {
+              log("> 错误: NFC 权限被拒绝", "error");
+              log("> 请检查系统设置 -> 应用权限", "warn");
+              stopAutoWrite();
+              break;
+            } else if (error.name === 'NotSupportedError') {
+              log("> 错误: 标签不支持或 NFC 关闭", "error");
+              log("> 请检查下拉菜单 NFC 是否开启", "warn");
+              await delay(2000);
+            } else {
+              updateUIState('error');
+              log(`> 错误: ${error.message}`, "error");
+              await delay(2000);
+            }
+
+            if (isWriting) updateUIState('scanning');
+          }
+        }
+
+      } catch (error) {
+        log(`> 初始化失败: ${error.message}`, "error");
+        stopAutoWrite();
+      }
+    }
+
+    function stopAutoWrite() {
+      isWriting = false;
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
+      }
+      updateUIState('idle');
+      log("> 系统已挂起。");
+    }
+
+    function updateUIState(state) {
+      statusCard.className = "cyber-card p-8 mb-6 text-center transition-all duration-300";
+      loadingBar.className = "h-full w-0 transition-all duration-300";
+
+      switch (state) {
+        case 'idle':
+          statusIcon.textContent = "🛑";
+          statusText.textContent = "系统待机";
+          statusText.className = "text-2xl font-bold mb-2 text-white";
+          statusSub.textContent = ">>> 等待指令输入";
+          statusSub.className = "text-xs text-gray-500 mt-3 font-bold uppercase tracking-widest";
+          toggleBtn.textContent = "初始化系统";
+          toggleBtn.className = "w-full py-5 text-black font-black text-xl bg-cyan-400 hover:bg-white hover:shadow-[0_0_20px_rgba(0,243,255,0.6)] transition-all clip-corner glitch-hover uppercase tracking-widest";
+          break;
+        case 'scanning':
+          statusCard.classList.add("state-scanning");
+          statusCard.style.borderColor = "var(--neon-yellow)";
+          statusIcon.textContent = "📡";
+          statusText.textContent = "扫描中...";
+          statusText.className = "text-2xl font-bold mb-2 text-yellow-400 text-glow";
+          statusSub.textContent = ">>> 请靠近目标设备";
+          statusSub.className = "text-xs text-yellow-600 mt-3 font-bold uppercase tracking-widest animate-pulse";
+          loadingBar.className = "h-full bg-yellow-400 w-full animate-pulse";
+          toggleBtn.textContent = "终止程序";
+          toggleBtn.className = "w-full py-5 text-white font-black text-xl bg-pink-600 hover:bg-pink-500 hover:shadow-[0_0_20px_rgba(255,0,255,0.6)] transition-all clip-corner uppercase tracking-widest border border-pink-400";
+          break;
+        case 'success':
+          statusCard.style.borderColor = "#00ff41";
+          statusCard.style.boxShadow = "0 0 30px rgba(0, 255, 65, 0.2)";
+          statusIcon.textContent = "💾";
+          statusText.textContent = "写入完成";
+          statusText.className = "text-2xl font-bold mb-2 text-green-400 text-glow";
+          statusSub.textContent = ">>> 目标已捕获";
+          statusSub.className = "text-xs text-green-600 mt-3 font-bold uppercase tracking-widest";
+          loadingBar.className = "h-full bg-green-500 w-full";
+          if (navigator.vibrate) navigator.vibrate(50);
+          break;
+        case 'error':
+          statusCard.style.borderColor = "var(--neon-pink)";
+          statusCard.style.boxShadow = "0 0 20px rgba(255, 0, 255, 0.3)";
+          statusIcon.textContent = "⚠️";
+          statusText.textContent = "系统异常";
+          statusText.className = "text-2xl font-bold mb-2 text-pink-500 text-glow-pink";
+          statusSub.textContent = ">>> 检查日志输出";
+          statusSub.className = "text-xs text-pink-700 mt-3 font-bold uppercase tracking-widest";
+          if (navigator.vibrate) navigator.vibrate([50, 50, 50]);
+          break;
+      }
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      let prefix = "信息";
+      let colorClass = "text-cyan-600";
+
+      if (type === 'error') {
+        prefix = "错误 ";
+        colorClass = "text-pink-500 font-bold";
+      } else if (type === 'warn') {
+        prefix = "警告";
+        colorClass = "text-yellow-500";
+      } else if (type === 'success') {
+        prefix = "完成";
+        colorClass = "text-green-400";
+      }
+
+      div.innerHTML = `<span class="text-gray-600">[${time}]</span> <span class="${colorClass}">${prefix}</span> :: ${msg}`;
+      div.className = "hover:bg-gray-900 px-1 border-b border-gray-900";
+
+      logContainer.appendChild(div);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+  </script>
+</body>
+
+</html>
